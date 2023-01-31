@@ -1,0 +1,23 @@
+{
+    "name": "hultberg/ladekalk",
+    "description": "Verktøy for å kalkulere ladetid for rimligste pris",
+    "type": "project",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "HbLib\\ChargeCalc\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Edvin Hultberg",
+            "email": "hultberg@mittnett.net"
+        }
+    ],
+    "require": {
+        "guzzlehttp/guzzle": "^7.5"
+    },
+    "require-dev": {
+        "roave/security-advisories": "dev-latest"
+    }
+}
