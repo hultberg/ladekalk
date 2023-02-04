@@ -89,15 +89,39 @@ class Runner
 
         usort($possibleOptimalHours, static fn (HourElectricPrice $a, HourElectricPrice $b) => $a->start <=> $b->start);
 
-        $avg = array_sum(array_map(static fn (HourElectricPrice $a) => $a->priceNok, $possibleOptimalHours)) / count($possibleOptimalHours);
-        echo 'Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL;
+        $iterator = $possibleOptimalHours;
 
-        foreach ($possibleOptimalHours as $price) {
-            echo $price->start->format('Y-m-d H:i:s');
-            echo ' - ' . $price->end->format('Y-m-d H:i:s');
-            echo ' @ ' . number_format($price->priceNok, 4) . ' NOK';
-            echo PHP_EOL;
-        }
+        do {
+            $groupSums = [];
+
+            while (key($iterator) !== null) {
+                $price = current($iterator);
+
+                echo $price->start->format('Y-m-d H:i');
+                $endFormat = 'H:i';
+                if ($price->start->format('Y-m-d') !== $price->end->format('Y-m-d')) {
+                    $endFormat = 'Y-m-d ' . $endFormat;
+                }
+                echo ' - ' . $price->end->format($endFormat);
+                echo ' @ ' . number_format($price->priceNok, 4) . ' NOK';
+                echo PHP_EOL;
+
+                $groupSums[] = $price->priceNok;
+
+                $nextPrice = next($iterator);
+
+                if ($nextPrice && $price->end->modify('+1 minute') < $nextPrice->start) {
+                    break;
+                }
+            }
+
+            $avg = array_sum($groupSums) / count($groupSums);
+            echo 'Session Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL;
+            echo '----------------' . PHP_EOL;
+        } while (key($iterator) !== null);
+
+        $avg = array_sum(array_map(static fn (HourElectricPrice $a) => $a->priceNok, $possibleOptimalHours)) / count($possibleOptimalHours);
+        echo 'Total Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL;
 
         return 0;
     }
