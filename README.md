@@ -2,9 +2,10 @@
 
 Enkel ladekalkulator for å finne rimligste tidsrom å lade bilen på fra nå. Forventet bruk er når du skal planlegge lading for natt og neste dag.
 
-Innstillingene tar utgangspunkt i min egen bil, du kan endre hvor stort batteri du har i filen `src/Application.php` og hvor mye du vil lade batteriet som maksmum (80% er standard og anbefalt av min produsent).
+Innstillingene tar utgangspunkt i min egen bil og Kristiansand (NO2) prisområde.
+Du kan endre hvor stort batteri du har, hvor mye du ønsker å lade som maks, og prisområde i filen `src/Application.php`.
 
-Kalkulatoren er laget for mitt eget personlig bruk.
+Kalkulatoren er i utgangspunktet for mitt eget personlig bruk.
 
 ```
 lap ~/projects/ladekalk (master ✘)✚✭ ᐅ podman run --rm -it -v $(pwd):/app -w /app docker.io/library/php:8.2-cli bin/console 50

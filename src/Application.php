@@ -7,5 +7,6 @@ class Application
 {
     public const CAR_BATTERY_CAPACITY = 77;
     public const CAR_MAX_CHARGE_PERCENT = 80;
-    public const CHARGER_PER_HOUR = 3.4;
+    public const CHARGER_PER_HOUR = 3.1;
+    public const PRICE_AREA = 'NO2';
 }

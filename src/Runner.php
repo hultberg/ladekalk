@@ -14,10 +14,11 @@ class Runner
             return 1;
         }
 
+        $priceArea = Application::PRICE_AREA;
         $today = new \DateTimeImmutable();
 
-        $prices = $this->getPrices($today);
-        $tomorrowPrices = $this->getPrices($today->modify('+1 day'));
+        $prices = $this->getPrices($today, $priceArea);
+        $tomorrowPrices = $this->getPrices($today->modify('+1 day'), $priceArea);
 
         if (is_array($tomorrowPrices)) {
             $prices = [...$prices, ...$tomorrowPrices];
@@ -144,15 +145,14 @@ class Runner
     }
 
     /**
-     * @param \DateTimeImmutable $dt
      * @return list<HourElectricPrice>|null
      */
-    private function getPrices(\DateTimeImmutable $dt): ?array
+    private function getPrices(\DateTimeImmutable $dt, string $priceArea): ?array
     {
-        $cacheFile = __DIR__ . '/../var/tmp/prices_' . $dt->format('Ymd') . '.json';
+        $cacheFile = __DIR__ . '/../var/tmp/prices_' . $priceArea . '_' . $dt->format('Ymd') . '.json';
 
         if (!file_exists($cacheFile) || !is_readable($cacheFile)) {
-            $data = $this->fetchPrices($dt);
+            $data = $this->fetchPrices($dt, $priceArea);
 
             file_put_contents($cacheFile, json_encode($data, JSON_THROW_ON_ERROR));
             unset($response, $client, $body);
@@ -176,14 +176,14 @@ class Runner
         return $data;
     }
 
-    private function fetchPrices(\DateTimeImmutable $dt): array
+    private function fetchPrices(\DateTimeImmutable $dt, string $priceArea): array
     {
         $url = sprintf(
             'https://www.hvakosterstrommen.no/api/v1/prices/%s/%s-%s_%s.json',
             $dt->format('Y'),
             $dt->format('m'),
             $dt->format('d'),
-            'NO2',
+            $priceArea,
         );
 
         $client = new Client();
