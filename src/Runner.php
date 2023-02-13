@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace HbLib\ChargeCalc;
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ClientException;
+use GuzzleHttp\Exception\GuzzleException;
 
 class Runner
 {
@@ -17,11 +19,13 @@ class Runner
         $priceArea = Application::PRICE_AREA;
         $today = new \DateTimeImmutable();
 
-        $prices = $this->getPrices($today, $priceArea);
-        $tomorrowPrices = $this->getPrices($today->modify('+1 day'), $priceArea);
+        $prices = $this->getPriceForDate($today, $priceArea);
+        $tomorrowPrices = $this->getPriceForDate($today->modify('+1 day'), $priceArea);
 
         if (is_array($tomorrowPrices)) {
             $prices = [...$prices, ...$tomorrowPrices];
+        } else {
+            fwrite(STDERR, 'Prices for ' . $today->modify('+1 day')->format('d.m.Y') . ' is not available' . PHP_EOL);
         }
         unset($tomorrowPrices);
 
@@ -147,12 +151,23 @@ class Runner
     /**
      * @return list<HourElectricPrice>|null
      */
-    private function getPrices(\DateTimeImmutable $dt, string $priceArea): ?array
+    private function getPriceForDate(\DateTimeImmutable $dt, string $priceArea): ?array
     {
         $cacheFile = __DIR__ . '/../var/tmp/prices_' . $priceArea . '_' . $dt->format('Ymd') . '.json';
 
         if (!file_exists($cacheFile) || !is_readable($cacheFile)) {
-            $data = $this->fetchPrices($dt, $priceArea);
+            try {
+                $data = $this->fetchPriceForDate($dt, $priceArea);
+            } catch (ClientException $e) {
+                if ($e->getResponse()->getStatusCode() === 404) {
+                    return null;
+                }
+
+                throw $e;
+            } catch (\JsonException $e) {
+                fwrite(STDERR, (string) $e . PHP_EOL);
+                return null;
+            }
 
             file_put_contents($cacheFile, json_encode($data, JSON_THROW_ON_ERROR));
             unset($response, $client, $body);
@@ -176,7 +191,11 @@ class Runner
         return $data;
     }
 
-    private function fetchPrices(\DateTimeImmutable $dt, string $priceArea): array
+    /**
+     * @throws GuzzleException
+     * @throws \JsonException
+     */
+    private function fetchPriceForDate(\DateTimeImmutable $dt, string $priceArea): array
     {
         $url = sprintf(
             'https://www.hvakosterstrommen.no/api/v1/prices/%s/%s-%s_%s.json',
