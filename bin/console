@@ -1,9 +1,4 @@
-#!/usr/bin/env php
-<?php
-declare(strict_types=1);
+#!/usr/bin/env sh
 
-require __DIR__ . '/../vendor/autoload.php';
+php -dvariables_order=EGPCS bin/console.php $@
 
-$args = $argv;
-unset($args[0]);
-exit((new \HbLib\ChargeCalc\Runner())->run(array_values($args)));

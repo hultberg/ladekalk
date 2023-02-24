@@ -11,7 +11,6 @@ RUN cd /srv/app \
 
 FROM docker.io/library/php:8.2-cli
 
-RUN pecl install xdebug
 COPY --from=composer /srv/app /srv/app
 
 WORKDIR /srv/app

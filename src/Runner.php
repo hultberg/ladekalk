@@ -3,98 +3,102 @@ declare(strict_types=1);
 
 namespace HbLib\ChargeCalc;
 
-use GuzzleHttp\Client;
-use GuzzleHttp\Exception\ClientException;
-use GuzzleHttp\Exception\GuzzleException;
-
 class Runner
 {
+    private static $help = <<<'EOL'
+    Usage: [options]
+
+      --charge <kwh>    The kWh each hour from the charger
+      --battery <kwh>   The battery capacity in kWh
+      --level <perc>    The current charge level in percentage
+      --max <perc>      The max charge level in percentage, default is 80.
+      --end <time>      The end time to stop charging like a departure time in H:i format.
+                        If the current time is after this time then the end time is for the next day.
+                        Example: Clock is 01.01.2023 13:00 with --end 08:00 resolves to 02.01.2023 08:00
+                        Example: Clock is 01.01.2023 17:00 with --end 16:00 resolves to 01.01.2023 16:00
+      --pricearea <code> The price area. One of NO1 (Oslo), NO2 (Kristiansand), NO3 (Bergen), NO4 (Trondheim), or NO5 (Tromsø)
+
+    The application will attempt to find the options via env by looking for
+    variables:
+      LADEKALK_CHARGE for --charge
+      LADEKALK_BATTERY for --battery
+      LADEKALK_LEVEL for --level
+      LADEKALK_MAX for --max
+      LADEKALK_END for --end
+      LADEKALK_PRICE_AREA for --pricearea
+
+    Report bugs at https://github.com/hultberg/ladekalk/issues/
+    Thanks to https://www.hvakosterstrommen.no/ for electricity prices API.
+
+    This application is intended for norwegian electricity consumers who chargers their
+    electric cars and want to calculate the optimal charge hours based on the price.
+    EOL;
+
     public function run(array $args): int
     {
-        if (count($args) === 0) {
-            echo 'Missing arguments for charge level' . PHP_EOL;
+        $options = array_replace(
+            $this->loadEnvOptions(),
+            $this->parseAppOptions($args),
+        );
+
+        if (!isset($options['charge'], $options['battery'], $options['pricearea'], $options['level'])) {
+            fwrite(STDERR, self::$help . PHP_EOL);
             return 1;
         }
 
-        $priceArea = Application::PRICE_AREA;
-        $today = new \DateTimeImmutable();
+        $options['max'] ??= 80;
 
-        $prices = $this->getPriceForDate($today, $priceArea);
-        $tomorrowPrices = $this->getPriceForDate($today->modify('+1 day'), $priceArea);
+        $now = new \DateTimeImmutable();
 
-        if (is_array($tomorrowPrices)) {
-            $prices = [...$prices, ...$tomorrowPrices];
+        if (isset($options['end'])) {
+            $endDateTime = \DateTimeImmutable::createFromFormat('H:i', $options['end']);
+
+            if ($now > $endDateTime) {
+                $endDateTime = $endDateTime->modify('+1 day');
+            }
         } else {
-            fwrite(STDERR, 'Prices for ' . $today->modify('+1 day')->format('d.m.Y') . ' is not available' . PHP_EOL);
+            $endDateTime = $now->modify('+1 day')->setTime(23, 59, 59);
         }
-        unset($tomorrowPrices);
 
-        $prices = array_values(array_filter($prices, static fn (HourElectricPrice $p) => $p->start >= $today));
+        $dates = [$now];
 
-        if (!isset($args[0]) || !is_numeric($args[0]) || $args[0] < 0) {
-            echo 'Invalid current charge state' . PHP_EOL;
+        if ($now->format('Y-m-d') !== $endDateTime->format('Y-m-d')) {
+            $dates[] = $endDateTime;
+        }
+
+        $prices = $this->getPrices($dates, $options['pricearea']);
+        $prices = array_values(array_filter($prices, static fn (HourElectricPrice $p) => $p->start >= $now && $p->end <= $endDateTime));
+
+        $chargeCalculator = new ChargeCalculator();
+        $timeToCharge = $chargeCalculator->calculate(
+            $options['battery'],
+            $options['charge'],
+            $options['level'],
+            $options['max'],
+        );
+
+        $optimalPriceResolver = new OptimalPriceResolver();
+        $optimalHours = $optimalPriceResolver->resolve($prices, $timeToCharge, $options['maxthreshold'] ?? 100);
+
+        if (count($optimalHours) === 0) {
+            fwrite(STDERR, 'No optimal hours was found' . PHP_EOL);
             return 1;
         }
 
-        $timeForCharge = $this->getTimeToCharge((int) $args[0]);
+        $firstPrice = $prices[array_key_first($prices)];
+        $lastPrice = $prices[array_key_last($prices)];
+        fwrite(STDOUT, sprintf(
+            'Prices fetched for period %s - %s',
+            $firstPrice->start->format('Y-m-d H:i:s'),
+            $lastPrice->end->format('Y-m-d H:i:s'),
+        ) . PHP_EOL);
 
-        if ($timeForCharge <= 0) {
-            echo 'Time to charge is <= 0' . PHP_EOL;
-            return 1;
-        }
+        $iterator = iterator_to_array($optimalHours);
 
-        /** @var HourElectricPrice|null $minPrice */
-        $minPrice = null;
-        /** @var HourElectricPrice|null $maxPrice */
-        $maxPrice = null;
+        static $priceLineTemplate = <<<'EOL'
+        :start - :end @ :price NOK (+:threshold%)
+        EOL;
 
-        foreach ($prices as $priceItem) {
-            if ($minPrice === null
-                || $minPrice->priceNok > $priceItem->priceNok) {
-                $minPrice = $priceItem;
-            }
-
-            if ($maxPrice === null
-                || $priceItem->priceNok > $maxPrice->priceNok) {
-                $maxPrice = $priceItem;
-            }
-        }
-
-        /** @var HourElectricPrice[] $possibleOptimalHours */
-        $possibleOptimalHours = [];
-        $timesSoFarTimestamp = 0;
-        $maxTimestamp = $timeForCharge;
-        $threshold = 2;
-        $minP = ($minPrice->priceNok / $maxPrice->priceNok) * 100;
-
-        $pricesQueue = $prices;
-        usort($pricesQueue, static fn (HourElectricPrice $a, HourElectricPrice $b) => $a->priceNok <=> $b->priceNok);
-
-        while (count($pricesQueue) > 0 && $maxTimestamp > $timesSoFarTimestamp && $threshold < 100) {
-            for (reset($pricesQueue); key($pricesQueue) !== null && $maxTimestamp > $timesSoFarTimestamp; next($pricesQueue)) {
-                $price = current($pricesQueue);
-                assert($price instanceof HourElectricPrice);
-
-                $p = ($price->priceNok / $maxPrice->priceNok) * 100;
-
-                if (($p - $minP) <= $threshold) {
-                    $possibleOptimalHours[] = $price;
-                    $timesSoFarTimestamp += 60 * 60;
-                    unset($pricesQueue[key($pricesQueue)]);
-                }
-            }
-
-            $threshold += 2;
-        }
-
-        if (count($possibleOptimalHours) === 0) {
-            echo 'Found no optimal hours' . PHP_EOL;
-            return 1;
-        }
-
-        usort($possibleOptimalHours, static fn (HourElectricPrice $a, HourElectricPrice $b) => $a->start <=> $b->start);
-
-        $iterator = $possibleOptimalHours;
 
         do {
             $groupSums = [];
@@ -102,14 +106,17 @@ class Runner
             while (key($iterator) !== null) {
                 $price = current($iterator);
 
-                echo $price->start->format('Y-m-d H:i');
                 $endFormat = 'H:i';
                 if ($price->start->format('Y-m-d') !== $price->end->format('Y-m-d')) {
                     $endFormat = 'Y-m-d ' . $endFormat;
                 }
-                echo ' - ' . $price->end->format($endFormat);
-                echo ' @ ' . number_format($price->priceNok, 4) . ' NOK';
-                echo PHP_EOL;
+
+                fwrite(STDOUT, strtr($priceLineTemplate, [
+                    ':start' => $price->start->format('Y-m-d H:i'),
+                    ':end' => $price->end->format($endFormat),
+                    ':price' => number_format($price->priceNok, 4),
+                    ':threshold' => round($optimalHours->getThreshold($price), 4),
+                ]) . PHP_EOL);
 
                 $groupSums[] = $price->priceNok;
 
@@ -121,101 +128,166 @@ class Runner
             }
 
             $avg = array_sum($groupSums) / count($groupSums);
-            echo 'Session Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL;
-            echo '----------------' . PHP_EOL;
+            $content = 'Session Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL;
+            $content .= '----------------';
+            fwrite(STDOUT, $content . PHP_EOL);
         } while (key($iterator) !== null);
 
-        $avg = array_sum(array_map(static fn (HourElectricPrice $a) => $a->priceNok, $possibleOptimalHours)) / count($possibleOptimalHours);
-        echo 'Total Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL;
+        $avg = array_sum(array_map(static fn (HourElectricPrice $a) => $a->priceNok, iterator_to_array($optimalHours))) / count($optimalHours);
+        fwrite(STDOUT, 'Total Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL);
 
         return 0;
     }
 
     /**
-     * @param int $chargeLevelPercent Current charge percentage.
-     * @return int Seconds for the time needed to charge to max charge percent
+     * @param array $args
+     * @return array{
+     *     battery?: int,
+     *     level?: int,
+     *     max?: int,
+     *     charge?: float,
+     *     pricearea?: string,
+     *     maxthreshold?: float,
+     *     end?: string,
+     * }
      */
-    private function getTimeToCharge(int $chargeLevelPercent): int
+    private function parseAppOptions(array $args): array
     {
-        // Specific for my own car...
-        $batteryPackKwh = Application::CAR_BATTERY_CAPACITY;
-        $chargePerHour = Application::CHARGER_PER_HOUR; // specific for my home charger
-        $maxChargeKwh = round($batteryPackKwh * (Application::CAR_MAX_CHARGE_PERCENT / 100), 2);
-        $currentChargeKwh = round($batteryPackKwh * ($chargeLevelPercent / 100), 2);
+        $parsed = [];
 
-        $timeForCharge = ($maxChargeKwh - $currentChargeKwh) / $chargePerHour;
+        $expectedIntArgs = [
+            '/--(?<arg>battery)=?\s?(?<value>\d+)/',
+            '/--(?<arg>level)=?\s?(?<value>\d+)/',
+            '/--(?<arg>max)=?\s?(?<value>\d+)/',
+        ];
 
-        return (int) round($timeForCharge * 60 * 60);
-    }
+        $expectedFloatArgs = [
+            '/--(?<arg>charge)=?\s?(?<value>[0-9.]+)/',
+            '/--(?<arg>maxthreshold)=?\s?(?<value>[0-9.]+)/',
+        ];
 
-    /**
-     * @return list<HourElectricPrice>|null
-     */
-    private function getPriceForDate(\DateTimeImmutable $dt, string $priceArea): ?array
-    {
-        $cacheFile = __DIR__ . '/../var/tmp/prices_' . $priceArea . '_' . $dt->format('Ymd') . '.json';
+        $expectedStringArgs = [
+            '/--(?<arg>pricearea)=?\s?(?<value>\w+)/',
+            '/--(?<arg>end)=?\s?(?<value>[0-9:]+)/',
+        ];
 
-        if (!file_exists($cacheFile) || !is_readable($cacheFile)) {
-            try {
-                $data = $this->fetchPriceForDate($dt, $priceArea);
-            } catch (ClientException $e) {
-                if ($e->getResponse()->getStatusCode() === 404) {
-                    return null;
-                }
-
-                throw $e;
-            } catch (\JsonException $e) {
-                fwrite(STDERR, (string) $e . PHP_EOL);
-                return null;
+        assert(array_is_list($args));
+        foreach ($args as $key => $arg) {
+            if (isset($args[$key + 1]) && str_starts_with($arg, '--')) {
+                $arg .= ' ' . $args[$key + 1];
             }
 
-            file_put_contents($cacheFile, json_encode($data, JSON_THROW_ON_ERROR));
-            unset($response, $client, $body);
-        } else {
-            $data = json_decode(file_get_contents($cacheFile), true, 512, JSON_THROW_ON_ERROR);
+            foreach ($expectedIntArgs as $regex) {
+                if (preg_match($regex, $arg, $matches)) {
+                    $parsed[$matches['arg']] = (int) $matches['value'];
+                    continue 2;
+                }
+            }
+
+            foreach ($expectedFloatArgs as $regex) {
+                if (preg_match($regex, $arg, $matches)) {
+                    $parsed[$matches['arg']] = (float) $matches['value'];
+                    continue 2;
+                }
+            }
+
+            foreach ($expectedStringArgs as $regex) {
+                if (preg_match($regex, $arg, $matches)) {
+                    $parsed[$matches['arg']] = $matches['value'];
+                    continue 2;
+                }
+            }
         }
 
-        if (!is_array($data)) {
-            return null;
-        }
-
-        $data = array_map(
-            static fn (array $i) => new HourElectricPrice(
-                new \DateTimeImmutable($i['time_start']),
-                (new \DateTimeImmutable($i['time_end']))->modify('-1 sec'),
-                $i['NOK_per_kWh'],
-            ),
-            $data,
-        );
-
-        return $data;
+        return $parsed;
     }
 
     /**
-     * @throws GuzzleException
-     * @throws \JsonException
+     * @return array{
+     *     battery?: int,
+     *     level?: int,
+     *     max?: int,
+     *     charge?: float,
+     *     pricearea?: string,
+     *     end?: string,
+     *     maxthreshold?: float,
+     * }
      */
-    private function fetchPriceForDate(\DateTimeImmutable $dt, string $priceArea): array
+    private function loadEnvOptions(): array
     {
-        $url = sprintf(
-            'https://www.hvakosterstrommen.no/api/v1/prices/%s/%s-%s_%s.json',
-            $dt->format('Y'),
-            $dt->format('m'),
-            $dt->format('d'),
-            $priceArea,
+        $options = array_merge(
+            array_map('intval', array_filter([
+                'battery' => $_ENV['LADEKALK_BATTERY'] ?? null,
+                'level' => $_ENV['LADEKALK_LEVEL'] ?? null,
+                'max' => $_ENV['LADEKALK_MAX'] ?? null,
+            ])),
+            array_map('floatval', array_filter([
+                'charge' => $_ENV['LADEKALK_CHARGE'] ?? null,
+                'maxthreshold' => $_ENV['LADEKALK_MAX_THRESHOLD'] ?? null,
+            ])),
         );
 
-        $client = new Client();
-        $response = $client->request('GET', $url);
-
-        $body = null;
-
-        if ($response->getStatusCode() === 200) {
-            $body = json_decode($response->getBody()->getContents(), true, 512, JSON_THROW_ON_ERROR);
-        } else if ($response->getStatusCode() !== 404) {
-            throw new \RuntimeException('Got response ' . $response->getStatusCode());
+        if (isset($_ENV['LADEKALK_PRICE_AREA'])) {
+            $options['pricearea'] = $_ENV['LADEKALK_PRICE_AREA'];
         }
 
-        return $body;
+        if (isset($_ENV['LADEKALK_END'])) {
+            $options['end'] = $_ENV['LADEKALK_END'];
+        }
+
+        return $options;
+    }
+
+    /**
+     * @param \DateTimeImmutable[] $dates
+     * @param string $priceArea
+     * @return array|HourElectricPrice[]
+     * @throws \JsonException
+     * @throws \Throwable
+     */
+    private function getPrices(array $dates, string $priceArea): array
+    {
+        /** @var \Fiber[] $fibers */
+        $fibers = [];
+        $priceFetcher = new PriceFetcher();
+
+        foreach ($dates as $date) {
+            $fibers[] = $priceFetcher->getForDate($date, $priceArea);
+        }
+
+        if (count($fibers) > 2) {
+            throw new \RuntimeException('This application is intended for fetching maximum 2 days of prices.');
+        }
+
+        /** @var HourElectricPrice[] $prices */
+        $prices = [];
+
+        do {
+            foreach ($fibers as $key => $fiber) {
+                if (!$fiber->isStarted()) {
+                    $fiber->start();
+                    continue;
+                }
+
+                if ($fiber->isSuspended()) {
+                    $fiber->resume();
+                }
+
+                if (!$fiber->isTerminated()) {
+                    continue;
+                }
+
+                $value = $fiber->getReturn();
+                assert(is_array($value) && array_is_list($value));
+
+                $prices = [...$prices, ...$value];
+
+                unset($fibers[$key]);
+            }
+
+            usleep(1000);
+        } while (count($fibers) > 0);
+
+        return $prices;
     }
 }
