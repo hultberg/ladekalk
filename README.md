@@ -1,39 +1,60 @@
 # ladekalk
 
+_English: This application calculates in theory the cheapest hours to charge your electric car. There is only support to fetch norwegian electric prices._
+
 Enkel ladekalkulator for å finne rimligste tidsrom å lade bilen på fra nå. Forventet bruk er når du skal planlegge lading for natt og neste dag.
 
 Kalkulatoren trenger å vite hvor stort ditt batteri er i kWt, hvor mange kWt din lader yter, ditt nåværende ladenivå i prosent, maksimum ønsket ladenivå (standard 80%), og ønsket tidspunkt for ferdig lading. Hvis klokka er etter tidspunktet vil det legges til en dag.
 
-Kalkulatoren er ment for privat bruk for å sjekke når det gunstigst å lade elbilden.
+Takk til hvakosterstrommen.no som leverer et gratis API for strømpriser.
+
+Kalkulatoren er ment for privat bruk for å sjekke når det gunstigst å lade elbilden. Strømpriser blir mellomlagret i mappen `var/tmp/` etter at de er hentet fra hvakosterstrommen.no.  Strømpriser for neste dag blir tilgjengelig etter kl 13:00 en gang.
+
+[<img src="https://ik.imagekit.io/ajdfkwyt/hva-koster-strommen/strompriser-levert-av-hvakosterstrommen_oTtWvqeiB.png" alt="Strømpriser levert av Hva koster strømmen.no" width="200" height="45" />](https://www.hvakosterstrommen.no/)
+
+## Eksempel
 
 ```shell
 # Eksempel for natt lading med avgangstid kl 08:00
 lap:/app$ bin/console --charge 3.1 --battery 77 --level 50 --max 80 --end 08:00 --pricearea NO2
-Prices fetched for period 2023-02-25 00:00:00 - 2023-02-25 23:59:59
-2023-02-25 03:00 - 03:59 @ 0.9243 NOK (+3.1007%)
-2023-02-25 04:00 - 04:59 @ 0.9273 NOK (+3.3736%)
-2023-02-25 05:00 - 05:59 @ 0.9366 NOK (+4.2319%)
-2023-02-25 06:00 - 06:59 @ 0.9430 NOK (+4.8174%)
-Session Average: 0.9328 NOK
+Prices fetched for period 2023-02-25 21:00:00 - 2023-02-26 07:59:59
+2023-02-25 21:00 - 21:59 @ 1.0515 NOK (+0%)
+2023-02-25 22:00 - 22:59 @ 1.0539 NOK (+0.2072%)
+2023-02-25 23:00 - 23:59 @ 1.0532 NOK (+0.1419%)
+2023-02-26 00:00 - 00:59 @ 1.1041 NOK (+4.5205%)
+2023-02-26 01:00 - 01:59 @ 1.0910 NOK (+3.3923%)
+2023-02-26 02:00 - 02:59 @ 1.0891 NOK (+3.2324%)
+Session Average: 1.0738 NOK
+Session Total: 6.44 NOK
 ----------------
-2023-02-25 11:00 - 11:59 @ 0.9226 NOK (+2.9393%)
-2023-02-25 12:00 - 12:59 @ 0.8986 NOK (+0.7275%)
-2023-02-25 13:00 - 13:59 @ 0.8907 NOK (+0%)
-2023-02-25 14:00 - 14:59 @ 0.8986 NOK (+0.7275%)
-Session Average: 0.9026 NOK
+2023-02-26 04:00 - 04:59 @ 1.1032 NOK (+4.4457%)
+2023-02-26 05:00 - 05:59 @ 1.1185 NOK (+5.7622%)
+Session Average: 1.1109 NOK
+Session Total: 2.22 NOK
 ----------------
-Total Average: 0.9177 NOK
+Total Average: 1.0831 NOK
+Total Total: 8.66 NOK
 ```
 
-Takk til hvakosterstrommen.no som leverer et gratis API for strømpriser.
+## Kjøre applikasjonen
 
-[<img src="https://ik.imagekit.io/ajdfkwyt/hva-koster-strommen/strompriser-levert-av-hvakosterstrommen_oTtWvqeiB.png" alt="Strømpriser levert av Hva koster strømmen.no" width="200" height="45" />](https://www.hvakosterstrommen.no/)
+Appliksjonen krever [php (>=8.2)](https://php.net) og [composer](https://getcomposer.org).
 
-Strømpriser blir mellomlagret i mappen `var/tmp/` etter at de er hentet fra hvakosterstrommen.no.
+Du kan kjøre applikasjonen ved å clone/laste ned dette prosjektet, kjøre `composer install`, også kjøre `bin/console`.
 
-Strømpriser for neste dag blir tilgjengelig etter kl 13:00.
+Du kan også bygge prosjektet med docker eller podman og kjøre den i en konteiner.
 
-## Usage
+```shell
+# Docker:
+$ docker build -f ./Containerfile -t hultberg.no/ladekalk:latest .
+$ docker run --rm -it hultberg.no/ladekalk:latest bin/console
+
+# Podman:
+$ podman build -t hultberg.no/ladekalk:latest .
+$ podman run --rm -it hultberg.no/ladekalk:latest bin/console
+```
+
+## Manual
 
 ```shell
 Usage: [options]
@@ -70,3 +91,7 @@ electric cars and want to calculate the optimal charge hours based on the price.
 - [X] Bedre mulighet for å stille på batterikapasitet og maks lading.
 - [ ] Opprydding av mellomlagringen
 - [ ] ???
+
+## Lisens
+
+Prosjektet er under MIT lisens. Se filen [LICENSE](./LICENSE).
