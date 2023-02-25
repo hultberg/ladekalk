@@ -127,14 +127,20 @@ class Runner
                 }
             }
 
-            $avg = array_sum($groupSums) / count($groupSums);
+            $sum = array_sum($groupSums);
+            $avg = $sum / count($groupSums);
             $content = 'Session Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL;
+            $content .= 'Session Total: ' . number_format($sum, 2) . ' NOK' . PHP_EOL;
             $content .= '----------------';
             fwrite(STDOUT, $content . PHP_EOL);
         } while (key($iterator) !== null);
 
-        $avg = array_sum(array_map(static fn (HourElectricPrice $a) => $a->priceNok, iterator_to_array($optimalHours))) / count($optimalHours);
-        fwrite(STDOUT, 'Total Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL);
+        $sum = array_sum(array_map(static fn (HourElectricPrice $a) => $a->priceNok, iterator_to_array($optimalHours)));
+        $avg = $sum / count($optimalHours);
+
+        $content = 'Total Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL;
+        $content .= 'Total Total: ' . number_format($sum, 2) . ' NOK';
+        fwrite(STDOUT, $content . PHP_EOL);
 
         return 0;
     }
