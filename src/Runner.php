@@ -5,6 +5,15 @@ namespace HbLib\ChargeCalc;
 
 class Runner
 {
+    /**
+     * @param resource $stdout
+     * @param resource $stderr
+     */
+    public function __construct(
+        private $stdout,
+        private $stderr,
+    ) { }
+
     private static $help = <<<'EOL'
     Usage: [options]
 
@@ -42,7 +51,7 @@ class Runner
         );
 
         if (!isset($options['charge'], $options['battery'], $options['pricearea'], $options['level'])) {
-            fwrite(STDERR, self::$help . PHP_EOL);
+            fwrite($this->stderr, self::$help . PHP_EOL);
             return 1;
         }
 
@@ -81,13 +90,13 @@ class Runner
         $optimalHours = $optimalPriceResolver->resolve($prices, $timeToCharge, $options['maxthreshold'] ?? 100);
 
         if (count($optimalHours) === 0) {
-            fwrite(STDERR, 'No optimal hours was found' . PHP_EOL);
+            fwrite($this->stderr, 'No optimal hours was found' . PHP_EOL);
             return 1;
         }
 
         $firstPrice = $prices[array_key_first($prices)];
         $lastPrice = $prices[array_key_last($prices)];
-        fwrite(STDOUT, sprintf(
+        fwrite($this->stdout, sprintf(
             'Prices fetched for period %s - %s',
             $firstPrice->start->format('Y-m-d H:i:s'),
             $lastPrice->end->format('Y-m-d H:i:s'),
@@ -98,7 +107,6 @@ class Runner
         static $priceLineTemplate = <<<'EOL'
         :start - :end @ :price NOK (+:threshold%)
         EOL;
-
 
         do {
             $groupSums = [];
@@ -111,7 +119,7 @@ class Runner
                     $endFormat = 'Y-m-d ' . $endFormat;
                 }
 
-                fwrite(STDOUT, strtr($priceLineTemplate, [
+                fwrite($this->stdout, strtr($priceLineTemplate, [
                     ':start' => $price->start->format('Y-m-d H:i'),
                     ':end' => $price->end->format($endFormat),
                     ':price' => number_format($price->priceNok, 4),
@@ -132,7 +140,7 @@ class Runner
             $content = 'Session Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL;
             $content .= 'Session Total: ' . number_format($sum, 2) . ' NOK' . PHP_EOL;
             $content .= '----------------';
-            fwrite(STDOUT, $content . PHP_EOL);
+            fwrite($this->stdout, $content . PHP_EOL);
         } while (key($iterator) !== null);
 
         $sum = array_sum(array_map(static fn (HourElectricPrice $a) => $a->priceNok, iterator_to_array($optimalHours)));
@@ -140,7 +148,7 @@ class Runner
 
         $content = 'Total Average: ' . number_format($avg, 4) . ' NOK' . PHP_EOL;
         $content .= 'Total Total: ' . number_format($sum, 2) . ' NOK';
-        fwrite(STDOUT, $content . PHP_EOL);
+        fwrite($this->stdout, $content . PHP_EOL);
 
         return 0;
     }

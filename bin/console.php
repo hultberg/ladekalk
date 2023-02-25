@@ -5,4 +5,4 @@ require __DIR__ . '/../vendor/autoload.php';
 
 $args = $argv;
 unset($args[0]);
-exit((new \HbLib\ChargeCalc\Runner())->run(array_values($args)));
+exit((new \HbLib\ChargeCalc\Runner(STDOUT, STDERR))->run(array_values($args)));
